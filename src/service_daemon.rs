@@ -42,13 +42,13 @@ use crate::{
 };
 
 #[cfg(target_os="windows")]
-use ipconfig;
+use {ipconfig, std::net::IpAddr};
 
-#[cfg(target_os="windows")]
-use std::net::IpAddr;
+#[cfg(not(target_os="windows"))]
+use if_addrs::IfAddr;
 
 use flume::{bounded, Sender, TrySendError};
-use if_addrs::{IfAddr, Ifv4Addr};
+use if_addrs::Ifv4Addr;
 use polling::Poller;
 use socket2::{SockAddr, Socket};
 use std::{
