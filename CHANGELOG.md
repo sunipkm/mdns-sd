@@ -1,3 +1,7 @@
+# Version 0.6.2
+
+- Adds `my_ipv4_interfaces()` implementation for Windows using the [`ipconfig:0.3.1`](https://crates.io/crates/ipconfig) library.
+
 # Version 0.6.1
 
 Highlights:

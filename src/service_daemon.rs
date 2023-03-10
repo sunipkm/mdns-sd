@@ -40,6 +40,13 @@ use crate::{
     service_info::{split_sub_domain, ServiceInfo},
     Receiver,
 };
+
+#[cfg(target_os="windows")]
+use ipconfig;
+
+#[cfg(target_os="windows")]
+use std::net::IpAddr;
+
 use flume::{bounded, Sender, TrySendError};
 use if_addrs::{IfAddr, Ifv4Addr};
 use polling::Poller;
@@ -1728,6 +1735,7 @@ fn call_listener(
 }
 
 /// Returns valid IPv4 interfaces in the host system.
+#[cfg(not(target_os="windows"))]
 fn my_ipv4_interfaces() -> Vec<Ifv4Addr> {
     if_addrs::get_if_addrs()
         .unwrap_or_default()
@@ -1743,6 +1751,75 @@ fn my_ipv4_interfaces() -> Vec<Ifv4Addr> {
             }
         })
         .collect()
+}
+
+#[cfg(target_os="windows")]
+fn my_ipv4_interfaces() -> Vec<Ifv4Addr> {
+    let mut ret = vec![];
+    'adapterloop: for adapter in ipconfig::get_adapters().unwrap_or_default().iter() {
+        for ip in adapter.ip_addresses() {
+            if ip.is_loopback() {
+                continue 'adapterloop;
+            }
+            match ip {
+                IpAddr::V6(_) => continue,
+                IpAddr::V4(ipv4) => {
+                    let mut item_netmask = Ipv4Addr::new(0, 0, 0, 0);
+                    let mut item_broadcast = None;
+                    'prefixloopv4: for (prefix_ip, prefix_length) in adapter.prefixes() {
+                        match prefix_ip {
+                            IpAddr::V4(prefix_ipv4) => {
+                                let mut netmask: [u8; 4] = [0; 4];
+                                for (n, netmask_elt) in netmask
+                                    .iter_mut()
+                                    .enumerate()
+                                    .take((*prefix_length as usize + 7) / 8)
+                                {
+                                    let x_byte = ipv4.octets()[n];
+                                    let y_byte = prefix_ipv4.octets()[n];
+                                    for m in 0..8 {
+                                        if (n * 8) + m > *prefix_length as usize {
+                                            break;
+                                        }
+                                        let bit = 1 << m;
+                                        if (x_byte & bit) == (y_byte & bit) {
+                                            *netmask_elt |= bit;
+                                        } else {
+                                            continue 'prefixloopv4;
+                                        }
+                                    }
+                                }
+                                item_netmask =
+                                    Ipv4Addr::new(netmask[0], netmask[1], netmask[2], netmask[3]);
+                                let mut broadcast: [u8; 4] = ipv4.octets();
+                                for n in 0..4 {
+                                    broadcast[n] |= !netmask[n];
+                                }
+                                item_broadcast = Some(Ipv4Addr::new(
+                                    broadcast[0],
+                                    broadcast[1],
+                                    broadcast[2],
+                                    broadcast[3],
+                                ));
+                                break 'prefixloopv4;
+                            }
+                            _ => (),
+                        }
+                    }
+                    if item_broadcast == None {
+                        continue;
+                    }
+                    let if_addr = Ifv4Addr {
+                        ip: *ipv4,
+                        netmask: item_netmask,
+                        broadcast: item_broadcast,
+                    };
+                    ret.push(if_addr);
+                }
+            }
+        }
+    }
+    ret
 }
 
 /// Sends out `packet` to `addr` on the socket in `intf_sock`.
